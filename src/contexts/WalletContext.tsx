@@ -12,6 +12,7 @@ interface WalletContextType {
   disconnectWallet: () => void;
   updateBalance: () => Promise<void>;
   getDecryptedPrivateKey: (password: string) => string | null;
+  getBalance: () => Promise<string>;
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
@@ -81,16 +82,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('wallet-data');
   }, []);
 
-  const updateBalance = useCallback(async () => {
-    if (!address) return;
+  const getBalance = useCallback(async (): Promise<string> => {
+    if (!address) return '0';
     try {
       const response = await fetch(`/api/balance/${address}`);
       const data = await response.json();
-      setBalance(data.balance);
+      return data.balance;
     } catch (error) {
       console.error('잔액 조회 실패');
+      return '0';
     }
   }, [address]);
+
+  const updateBalance = useCallback(async () => {
+    const newBalance = await getBalance();
+    setBalance(newBalance);
+  }, [getBalance]);
 
   return (
     <WalletContext.Provider value={{
@@ -101,7 +108,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connectWallet,
       disconnectWallet,
       updateBalance,
-      getDecryptedPrivateKey
+      getDecryptedPrivateKey,
+      getBalance
     }}>
       {children}
     </WalletContext.Provider>

@@ -35,17 +35,26 @@ interface TransactionResult {
   message?: string;
 }
 
+interface AirdropTransaction {
+  txHash: string;
+  timestamp: number;
+  recipients: {
+    address: string;
+    amount: string;
+    status: 'pending' | 'success' | 'failed';
+  }[];
+  status: 'pending' | 'success' | 'failed';
+}
+
 export default function AirdropPage() {
   const [recipients, setRecipients] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<AirdropResult[]>([]);
+  const [results, setResults] = useState<AirdropTransaction[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const [processedResults, setProcessedResults] = useState<AirdropResult[]>([]);
-
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const { address, balance, isConnected, updateBalance, disconnectWallet, getDecryptedPrivateKey } = useWallet();
+  const { address, balance, isConnected, updateBalance, disconnectWallet, getDecryptedPrivateKey, getBalance } = useWallet();
 
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
 
@@ -180,7 +189,9 @@ export default function AirdropPage() {
       setError(null);
 
       const recipientList = processRecipients(recipients);
-      console.log('Sending recipient list:', recipientList);
+      const initialBalance = balance;
+
+      console.log('initial balance', initialBalance);
 
       try {
         const response = await axios.post('/api/transaction', {
@@ -191,31 +202,73 @@ export default function AirdropPage() {
 
         const { txHash } = response.data;
         
-        const results = recipientList.map(({ address: recipientAddress, amount }) => ({
-          address: recipientAddress,
-          amount,
+        // 초기 트랜잭션 상태 설정
+        const transaction: AirdropTransaction = {
           txHash,
-          status: 'success' as const
-        }));
+          timestamp: Date.now(),
+          recipients: recipientList.map(({ address, amount }) => ({
+            address,
+            amount,
+            status: 'pending'
+          })),
+          status: 'pending'
+        };
 
-        setResults(results);
-        setProgress(100);
+        setResults([transaction]);
         
-        await updateBalance();
+        // 밸런스 변경 모니터링
+        let attempts = 0;
+        const maxAttempts = 300; // 5분 타임아웃 (300초)
+        const checkBalanceChange = async () => {
+          const currentBalance = await getBalance();
+          console.log('current balance:', currentBalance, 'initial balance:', initialBalance);
+          attempts++;
+          
+          if (currentBalance !== initialBalance) {
+            setResults(prev => prev.map(tx => ({
+              ...tx,
+              status: 'success',
+              recipients: tx.recipients.map(recipient => ({
+                ...recipient,
+                status: 'success'
+              }))
+            })));
+            setProgress(100);
+            setIsProcessing(false);
+            await updateBalance();
+          } else if (attempts >= maxAttempts) {
+            // 타임아웃 시 상태 업데이트
+            setResults(prev => prev.map(tx => ({
+              ...tx,
+              status: 'pending',  // failed 대신 pending으로 변경
+              recipients: tx.recipients.map(recipient => ({
+                ...recipient,
+                status: 'pending'
+              }))
+            })));
+            setIsProcessing(false);
+            throw new Error("Transaction verification timeout. Please check the transaction status on the blockchain explorer.");
+          } else {
+            setProgress((attempts / maxAttempts) * 100);
+            setTimeout(checkBalanceChange, 1000);
+          }
+        };
+
+        checkBalanceChange();
+
       } catch (error) {
-        const failedResults = recipientList.map(({ address: recipientAddress, amount }) => ({
-          address: recipientAddress,
-          amount,
-          status: 'failed' as const,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }));
-        
-        setResults(failedResults);
+        setResults(prev => prev.map(tx => ({
+          ...tx,
+          status: 'failed',
+          recipients: tx.recipients.map(recipient => ({
+            ...recipient,
+            status: 'failed'
+          }))
+        })));
         throw error;
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Unknown error');
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -305,49 +358,47 @@ export default function AirdropPage() {
             <div className="mt-4 border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
                 <div className="min-w-full divide-y">
-                  <div className="bg-gray-50">
-                    <div className="grid grid-cols-4 gap-4 px-4 py-3 text-sm font-medium text-gray-500">
-                      <div>Address</div>
-                      <div>Amount</div>
-                      <div>Status</div>
-                      <div>Transaction</div>
-                    </div>
-                  </div>
-                  <div className="divide-y bg-white">
-                    {results.map((result, index) => (
-                      <div key={index} className="grid grid-cols-4 gap-4 px-4 py-3 text-sm">
-                        <div className="font-mono truncate">{result.address}</div>
-                        <div>{result.amount} BGEO</div>
-                        <div>
-                          <span className={
-                            result.status === 'success' 
-                              ? 'text-green-600' 
-                              : result.status === 'failed' 
-                                ? 'text-red-600' 
-                                : 'text-yellow-600'
-                          }>
-                            {result.status === 'success' ? 'Success' : 
-                             result.status === 'failed' ? 'Failed' : 'Processing'}
-                          </span>
+                  {results.map((transaction) => (
+                    <div key={transaction.txHash} className="bg-white">
+                      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                        <div className="space-y-1">
+                          <a 
+                            href={`https://scan.bgeo.app/tx/${transaction.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline font-mono"
+                          >
+                            {transaction.txHash}
+                          </a>
+                          <div className="text-sm text-gray-500">
+                            {new Date(transaction.timestamp).toLocaleString()}
+                          </div>
                         </div>
-                        <div>
-                          {result.txHash && (
-                            <a 
-                              href={`https://scan.bgeo.app/tx/${result.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
-                            >
-                              {result.txHash.slice(0, 8)}...
-                            </a>
-                          )}
-                          {result.error && (
-                            <span className="text-red-600">{result.error}</span>
-                          )}
+                        <div className={`font-medium ${
+                          transaction.status === 'success' ? 'text-green-600' : 
+                          transaction.status === 'failed' ? 'text-red-600' : 
+                          'text-yellow-600'
+                        }`}>
+                          {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div className="divide-y">
+                        {transaction.recipients.map((recipient, index) => (
+                          <div key={index} className="grid grid-cols-3 gap-4 px-4 py-3 text-sm">
+                            <div className="font-mono truncate">{recipient.address}</div>
+                            <div>{recipient.amount} BGEO</div>
+                            <div className={
+                              recipient.status === 'success' ? 'text-green-600' : 
+                              recipient.status === 'failed' ? 'text-red-600' : 
+                              'text-yellow-600'
+                            }>
+                              {recipient.status.charAt(0).toUpperCase() + recipient.status.slice(1)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
