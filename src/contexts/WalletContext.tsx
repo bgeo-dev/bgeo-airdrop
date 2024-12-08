@@ -33,6 +33,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const getBalance = useCallback(async (): Promise<string> => {
+    if (!address) return '0';
+    try {
+      const response = await fetch(`/api/balance/${address}`);
+      const data = await response.json();
+      return data.balance;
+    } catch (err) {
+      console.error('Balance fetching failed', err);
+      return '0';
+    }
+  }, [address]);
+
+  const updateBalance = useCallback(async () => {
+    const newBalance = await getBalance();
+    setBalance(newBalance);
+  }, [getBalance]);
+
   const connectWallet = useCallback(async (mnemonic: string, password: string) => {
     try {
       let sdk;
@@ -56,11 +73,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         await updateBalance();
       }
-    } catch (error) {
-      console.error('connectWallet error', error);
+    } catch (err) {
+      console.error('connectWallet error', err);
       throw new Error('Wallet connection failed');
     }
-  }, []);
+  }, [updateBalance]);
 
   const getDecryptedPrivateKey = useCallback((password: string): string | null => {
     try {
@@ -68,8 +85,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const bytes = CryptoJS.AES.decrypt(encryptedPrivateKey, password);
       const privateKey = bytes.toString(CryptoJS.enc.Utf8);
       return privateKey;
-    } catch (error) {
-      console.error('Failed to decrypt private key');
+    } catch (err) {
+      console.error('Failed to decrypt private key:', err);
       return null;
     }
   }, [encryptedPrivateKey]);
@@ -81,23 +98,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setIsConnected(false);
     localStorage.removeItem('wallet-data');
   }, []);
-
-  const getBalance = useCallback(async (): Promise<string> => {
-    if (!address) return '0';
-    try {
-      const response = await fetch(`/api/balance/${address}`);
-      const data = await response.json();
-      return data.balance;
-    } catch (error) {
-      console.error('잔액 조회 실패');
-      return '0';
-    }
-  }, [address]);
-
-  const updateBalance = useCallback(async () => {
-    const newBalance = await getBalance();
-    setBalance(newBalance);
-  }, [getBalance]);
 
   return (
     <WalletContext.Provider value={{

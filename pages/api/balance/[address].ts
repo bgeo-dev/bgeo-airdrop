@@ -6,8 +6,6 @@ export default async function handler(
     res: NextApiResponse
 ) {
     const { address } = req.query;
-    console.log('=== balance check ===');
-    console.log('address', address);
 
     try {
         const response = await axios.get(`${process.env.BGEO_API_URL}/balance/${address}`);

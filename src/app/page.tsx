@@ -14,27 +14,6 @@ import CheckPasswordDialog from '@/components/CheckPasswordDialog';
 
 import axios from 'axios';
 
-interface AirdropResult {
-  address: string;
-  amount: string;
-  txHash?: string;
-  status: 'pending' | 'success' | 'failed';
-  error?: string;
-}
-
-interface UTXO {
-  txid: string;
-  vout: number;
-  amount: string;
-  // 필요한 다른 UTXO 필드들
-}
-
-interface TransactionResult {
-  status: 'success' | 'failed';
-  txHash?: string;
-  message?: string;
-}
-
 interface AirdropTransaction {
   txHash: string;
   timestamp: number;
@@ -62,7 +41,7 @@ export default function AirdropPage() {
     if (isConnected) {
       updateBalance();
     }
-  }, [isConnected]);
+  }, [isConnected, updateBalance]);
 
   const handleAirdropClick = () => {
     if (!isConnected) {
@@ -81,8 +60,9 @@ export default function AirdropPage() {
 
       setIsPasswordDialogOpen(false);
       handleAirdrop(privateKey);
-    } catch (error) {
+    } catch (err) {
       setError('Invalid password. Please try again.');
+      console.log('error', err);
     }
   };
 
@@ -122,60 +102,6 @@ export default function AirdropPage() {
     }
   };
 
-  const getUtxos = async (address: string) => {
-    try {
-      const response = await axios.get(`/api/utxo/${address}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching UTXOs:', error);
-      throw new Error('Failed to fetch UTXOs');
-    }
-  };
-
-  const callRpcGateway = async (method: string, params: any[]) => {
-    try {
-      const response = await axios.post('/api/gateway', {
-        method,
-        params,
-      });
-
-      if (response.data.error) {
-        throw new Error(`Gateway Error: ${response.data.error.message}`);
-      }
-
-      return response.data.result;
-    } catch (error) {
-      console.error('Gateway API error:', error);
-      throw error;
-    }
-  };
-
-  const sendTransaction = async (fromPrivateKey: string, toAddress: string, amount: string) => {
-    try {
-      if (!address) {
-        throw new Error('Sender address is not initialized');
-      }
-
-      const response = await axios.post('/api/transaction', {
-        fromAddress: address,
-        toAddress,
-        amount,
-        privateKey: fromPrivateKey
-      });
-
-      const data = response.data;
-      
-      if (!data.success) {
-        throw new Error(data.error);
-      }
-
-      return data.txHash;
-    } catch (error) {
-      console.error('Error sending transaction:', error);
-      throw error;
-    }
-  };
-
   const handleAirdrop = async (privateKey: string) => {
     if (!address || !recipients) {
       setError('Please fill in all fields.');
@@ -202,7 +128,7 @@ export default function AirdropPage() {
 
         const { txHash } = response.data;
         
-        // 초기 트랜잭션 상태 설정
+        // set initial transaction status
         const transaction: AirdropTransaction = {
           txHash,
           timestamp: Date.now(),
@@ -216,12 +142,12 @@ export default function AirdropPage() {
 
         setResults([transaction]);
         
-        // 밸런스 변경 모니터링
+        // monitor balance change
         let attempts = 0;
-        const maxAttempts = 300; // 5분 타임아웃 (300초)
+        const maxAttempts = 420; // 7 minutes timeout (420 seconds)
         const checkBalanceChange = async () => {
           const currentBalance = await getBalance();
-          console.log('current balance:', currentBalance, 'initial balance:', initialBalance);
+          //console.log('current balance:', currentBalance, 'initial balance:', initialBalance);
           attempts++;
           
           if (currentBalance !== initialBalance) {
@@ -237,7 +163,7 @@ export default function AirdropPage() {
             setIsProcessing(false);
             await updateBalance();
           } else if (attempts >= maxAttempts) {
-            // 타임아웃 시 상태 업데이트
+            // update transaction status on timeout
             setResults(prev => prev.map(tx => ({
               ...tx,
               status: 'pending',  // failed 대신 pending으로 변경
@@ -247,7 +173,7 @@ export default function AirdropPage() {
               }))
             })));
             setIsProcessing(false);
-            throw new Error("Transaction verification timeout. Please check the transaction status on the blockchain explorer.");
+            throw new Error("Transaction verification timeout (7 minutes). Please check the transaction status on the blockchain explorer.");
           } else {
             setProgress((attempts / maxAttempts) * 100);
             setTimeout(checkBalanceChange, 1000);
